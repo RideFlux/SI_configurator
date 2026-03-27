@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Callable, List, Optional, Tuple
 
-_DEFAULT_CONFIG = Path(__file__).parent / "config.yml"
+_DEFAULT_CONFIG = Path(__file__).parent / "configs" / "config.yml"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
