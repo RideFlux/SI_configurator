@@ -1,0 +1,102 @@
+# =============================================================================
+# Hesai PTC LiDAR 설정 파일
+# =============================================================================
+#
+# 구조:
+#   defaults  : 모든 LiDAR에 공통 적용되는 기본값
+#   lidars    : 개별 LiDAR 목록 (defaults를 override 가능)
+#
+# override 규칙:
+#   - lidars 항목에 connection/settings가 없으면 defaults 값을 그대로 사용
+#   - 일부 항목만 작성하면 해당 항목만 override되고 나머지는 defaults 유지
+#   - ptp 같은 중첩 항목도 동일하게 부분 override 가능
+# =============================================================================
+
+defaults:
+
+  # --------------------------------------------------------------------------
+  # connection: 스크립트 실행에 필요한 접속 정보 (LiDAR 설정값 아님)
+  # --------------------------------------------------------------------------
+  connection:
+    port: 9347        # PTC TCP 포트 (기본값: 9347)
+    timeout: 5.0      # 소켓 타임아웃 초 (기본값: 5.0)
+
+  # --------------------------------------------------------------------------
+  # settings: LiDAR에 적용할 설정값
+  # 원하지 않는 항목은 삭제하면 해당 항목은 변경하지 않음
+  # --------------------------------------------------------------------------
+  settings:
+
+    # 레이저 트리거 방식
+    # 선택: angle based | time based
+    trigger_method: "angle"
+
+    # 거리 측정 리턴 모드
+    # 선택: last return | dual return | first return
+    return_mode: "dual return"
+
+    # 포인트 클라우드 UDP 목적지 포트
+    dest_lidar_udp_port: 2368
+
+    # 클럭 소스
+    # 선택: GPS | PTP
+    clock_source: "PTP"
+
+    # PTP 설정 (clock_source: PTP 일 때 적용)
+    ptp:
+
+      # PTP 프로파일
+      # 선택: ieee1588v2 | ieee802.1as
+      profile: "ieee1588v2"
+
+      # PTP 도메인 번호
+      # 범위: 0 ~ 127
+      domain: 0
+
+      # 네트워크 전송 방식
+      # 선택: UDP/IP | L2
+      # ※ ieee802.1as 프로파일은 항상 L2 (자동 고정)
+      network: "L2"
+
+      # Announce 메시지 간격 (log2 초 단위, ieee1588v2 전용)
+      # 범위: -2 ~ 3  |  기본값: 1 (= 2초)
+      logAnnounceInterval: 1
+
+      # Sync 메시지 간격 (log2 초 단위, ieee1588v2 전용)
+      # 범위: -7 ~ 3  |  기본값: 1 (= 2초)
+      logSyncInterval: 1
+
+      # Delay_Req 최소 간격 (log2 초 단위, ieee1588v2 전용)
+      # 범위: -7 ~ 3  |  기본값: 0 (= 1초)
+      logMinDelayReqInterval: 0
+
+
+# =============================================================================
+# lidars: 개별 LiDAR 목록
+# =============================================================================
+lidars:
+
+  # LiDAR 1: defaults 설정 그대로 사용 (connection.ip 만 지정)
+  - name: pandar64_0 
+    connection:
+      ip: "10.30.1.100"
+    settings:
+      dest_lidar_udp_port: 2368
+
+  - name: xt32_0 
+    connection:
+      ip: "10.34.1.100"
+    settings:
+      dest_lidar_udp_port: 2371
+
+  - name: xt32_1 
+    connection:
+      ip: "10.35.1.100"
+    settings:
+      dest_lidar_udp_port: 2372
+
+  - name: xt32_3 
+    connection:
+      ip: "10.37.1.100"
+    settings:
+      dest_lidar_udp_port: 2373

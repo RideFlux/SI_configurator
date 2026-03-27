@@ -2,6 +2,12 @@
 """
 car_config.py - 시스템 초기 설정 스크립트
 각 Task를 ENABLED 딕셔너리에서 True/False로 제어
+
+사용법:
+    python car_config.py                              # config.yml, DEFAULT
+    python car_config.py ODIM                         # config.yml, ODIM 프로파일
+    python car_config.py --config /path/to/my.yml     # 다른 설정 파일, DEFAULT
+    python car_config.py --config /path/to/my.yml ODIM
 """
 
 import argparse
@@ -10,29 +16,72 @@ import re
 import shutil
 import subprocess
 import sys
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Callable, List, Optional, Tuple
 
-sys.path.insert(0, str(Path(__file__).parent))
-import config as _cfg
-
-# 모듈 전역 설정 — main()에서 프로파일 적용 후 갱신됨
-_c = _cfg.get_config(None)
-ENABLED            = _c["ENABLED"]
-INITIAL_SETUP_FILE = _c["INITIAL_SETUP_FILE"]
-CAN_CMD_TEMPLATE   = _c["CAN_CMD_TEMPLATE"]
-PING_TARGETS       = _c["PING_TARGETS"]
-PING_COUNT         = _c["PING_COUNT"]
-PING_TIMEOUT       = _c["PING_TIMEOUT"]
-NIC_CHECKS         = _c["NIC_CHECKS"]
-del _c
+_DEFAULT_CONFIG = Path(__file__).parent / "config.yml"
 
 
-def _apply_profile(profile: Optional[str]):
-    """프로파일 설정을 모듈 전역 변수에 반영한다."""
+def _deep_merge(base: dict, override: dict) -> dict:
+    """override를 base에 재귀적으로 병합한 새 dict를 반환. 중첩 dict는 키 단위로 병합."""
+    result = dict(base)
+    for key, val in override.items():
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_config(config_file: Path, profile: Optional[str]) -> dict:
+    """YAML 설정 파일을 읽어 DEFAULT에 프로파일 오버라이드를 병합한 딕셔너리를 반환."""
+    if not config_file.exists():
+        raise FileNotFoundError(f"설정 파일을 찾을 수 없습니다: {config_file}")
+
+    with config_file.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    cfg = dict(data["default"])
+
+    if profile is not None:
+        key = profile.lower()
+        profiles = data.get("profiles", {})
+        if key not in profiles:
+            raise ValueError(
+                f"알 수 없는 프로파일: '{profile}'  (사용 가능: {', '.join(profiles)})"
+            )
+        cfg = _deep_merge(cfg, profiles[key])
+
+    cfg["INITIAL_SETUP_FILE"] = Path(cfg["INITIAL_SETUP_FILE"])
+    cfg["NIC_CHECKS"] = [tuple(pair) for pair in cfg["NIC_CHECKS"]]
+
+    lidar_file = cfg.get("LIDAR_CONFIG_FILE")
+    if lidar_file:
+        p = Path(lidar_file)
+        cfg["LIDAR_CONFIG_FILE"] = p if p.is_absolute() else config_file.parent / p
+    else:
+        cfg["LIDAR_CONFIG_FILE"] = None
+
+    return cfg
+
+
+# 모듈 전역 설정 — main()의 _apply_config() 호출 후 실제 값으로 채워짐
+ENABLED:            dict          = {}
+INITIAL_SETUP_FILE: Path          = Path()
+CAN_CMD_TEMPLATE:   str           = ""
+PING_TARGETS:       list          = []
+PING_COUNT:         int           = 0
+PING_TIMEOUT:       int           = 0
+NIC_CHECKS:         list          = []
+LIDAR_CONFIG_FILE:  Optional[Path] = None
+
+
+def _apply_config(config_file: Path, profile: Optional[str]):
+    """설정 파일과 프로파일을 모듈 전역 변수에 반영한다."""
     g = globals()
-    for key, val in _cfg.get_config(profile).items():
+    for key, val in _load_config(config_file, profile).items():
         g[key] = val
 
 
@@ -81,12 +130,10 @@ def edit_initial_setup():
     new_lines = []
 
     for line in lines:
-        # 1) "state UP" 가 있을 때만 "UP" 으로 치환
         if "state UP" in line:
             line = line.replace("state UP", "UP")
             log("OK", f'  "state UP" → "UP" 치환')
 
-        # 2) "ip link set canX" 를 포함한 줄 전체를 대치 (동일하면 건너뜀)
         m = re.search(r"ip link set (can\d+)", line)
         if m:
             iface = m.group(1)
@@ -222,7 +269,6 @@ def check_nic():
     all_ok = True
     for expected_iface, ip in NIC_CHECKS:
         if ip:
-            # 1) IP 존재 여부 확인 후 UP 상태를 한 줄로 출력
             actual_iface = ip_iface_map.get(ip)
             if actual_iface is None:
                 log("ERROR", f"IP 없음: {ip} (예상 NIC: {expected_iface})")
@@ -241,7 +287,6 @@ def check_nic():
             if not state:
                 all_ok = False
         else:
-            # IP 미지정 — UP 여부만 확인
             state = _is_iface_up(expected_iface)
             if state is None:
                 log("ERROR", f"인터페이스 없음: {expected_iface}")
@@ -256,6 +301,36 @@ def check_nic():
 
 
 # =============================================================================
+# Task 5: LiDAR 설정
+# =============================================================================
+def run_lidar_config():
+    separator()
+    log("INFO", f"LiDAR 설정 시작: {LIDAR_CONFIG_FILE}")
+
+    if not LIDAR_CONFIG_FILE:
+        log("WARN", "LIDAR_CONFIG_FILE이 설정되지 않았습니다 — 건너뜀")
+        return False
+
+    if not LIDAR_CONFIG_FILE.exists():
+        log("ERROR", f"LiDAR 설정 파일이 존재하지 않습니다: {LIDAR_CONFIG_FILE}")
+        return False
+
+    _lidar_script = Path(__file__).parent / "lidar_configurator.py"
+    if not _lidar_script.exists():
+        log("ERROR", f"lidar_configurator.py를 찾을 수 없습니다: {_lidar_script}")
+        return False
+
+    result = subprocess.run(
+        [sys.executable, str(_lidar_script), "--config", str(LIDAR_CONFIG_FILE)],
+    )
+    if result.returncode == 0:
+        log("OK", "LiDAR 설정 완료")
+    else:
+        log("ERROR", f"lidar_configurator.py 종료 코드: {result.returncode}")
+    return result.returncode == 0
+
+
+# =============================================================================
 # Task 등록 테이블 (순서 보장, 새 Task는 여기에만 추가)
 # =============================================================================
 TASKS: List[Tuple[str, Callable]] = [
@@ -263,6 +338,7 @@ TASKS: List[Tuple[str, Callable]] = [
     ("check_connectivity", check_connectivity),
     ("install_logrotate",  install_logrotate),
     ("check_nic",          check_nic),
+    ("run_lidar_config",   run_lidar_config),
 ]
 
 
@@ -271,6 +347,13 @@ TASKS: List[Tuple[str, Callable]] = [
 # =============================================================================
 def main():
     parser = argparse.ArgumentParser(description="시스템 초기 설정 스크립트")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG,
+        metavar="FILE",
+        help=f"YAML 설정 파일 경로 (기본값: {_DEFAULT_CONFIG})",
+    )
     parser.add_argument(
         "profile",
         nargs="?",
@@ -281,25 +364,23 @@ def main():
     args = parser.parse_args()
 
     try:
-        _apply_profile(args.profile)
-    except ValueError as e:
+        _apply_config(args.config, args.profile)
+    except (FileNotFoundError, ValueError) as e:
         print(f"[ERROR] {e}")
         return 1
-
-    # 프로파일 적용 후 갱신된 ENABLED를 명시적으로 재참조
-    enabled = ENABLED
 
     profile_label = args.profile.upper() if args.profile else "DEFAULT"
 
     print("=" * 50)
     print(f" 시스템 초기 설정 스크립트  [{profile_label}]")
+    print(f" 설정 파일: {args.config}")
     print(f" {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
     results: Dict[str, Optional[bool]] = {}
 
     for name, func in TASKS:
-        if not enabled.get(name, False):
+        if not ENABLED.get(name, False):
             log("SKIP", f"{name} (비활성)")
             results[name] = None
             continue
