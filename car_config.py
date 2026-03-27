@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-setup.py - 시스템 초기 설정 스크립트
+car_config.py - 시스템 초기 설정 스크립트
 각 Task를 ENABLED 딕셔너리에서 True/False로 제어
 """
 
@@ -76,13 +76,6 @@ def edit_initial_setup():
         log("ERROR", f"파일이 존재하지 않습니다: {INITIAL_SETUP_FILE}")
         return False
 
-    # 백업
-    backup = INITIAL_SETUP_FILE.with_suffix(
-        f".sh.bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    )
-    shutil.copy2(INITIAL_SETUP_FILE, backup)
-    log("INFO", f"백업 생성: {backup}")
-
     original_text = INITIAL_SETUP_FILE.read_text()
     lines = original_text.splitlines(keepends=True)
     new_lines = []
@@ -129,7 +122,11 @@ def check_connectivity():
     separator()
     log("INFO", f"IP 연결 확인 시작 (ping ×{PING_COUNT}, timeout {PING_TIMEOUT}s)")
 
-    results: dict[str, bool] = {}
+    if not PING_TARGETS:
+        log("WARN", "PING_TARGETS가 비어 있습니다 — 건너뜀")
+        return False
+
+    results: Dict[str, bool] = {}
 
     for ip in PING_TARGETS:
         try:
@@ -167,7 +164,7 @@ def install_logrotate():
 
     log("INFO", "logrotate 설치 중...")
 
-    sudo = ["sudo"] if shutil.which("sudo") and os.geteuid() != 0 else []
+    sudo = ["sudo"] if shutil.which("sudo") and hasattr(os, "geteuid") and os.geteuid() != 0 else []
 
     pkg_managers = {
         "apt-get": sudo + ["apt-get", "install", "-y", "logrotate"],
@@ -195,16 +192,18 @@ def install_logrotate():
 # =============================================================================
 # Task 4: NIC 이름 및 IP 확인
 # =============================================================================
-def _find_iface_for_ip(ip: str) -> Optional[str]:
-    """시스템 전체에서 ip가 할당된 인터페이스 이름을 반환. 없으면 None."""
+def _build_ip_iface_map() -> Dict[str, str]:
+    """시스템 전체 IP → 인터페이스 이름 맵을 한 번만 조회해 반환."""
     result = run_cmd(["ip", "-o", "addr"], check=False)
+    ip_map: Dict[str, str] = {}
     for line in result.stdout.splitlines():
         # 형식: "2: eth0    inet 192.168.1.100/24 ..."
-        m = re.search(rf"\binet6?\s+{re.escape(ip)}(?:/|\s)", line)
+        m = re.search(r"\binet6?\s+([^\s/]+)", line)
         if m:
             parts = line.split()
-            return parts[1] if len(parts) >= 2 else None
-    return None
+            if len(parts) >= 2:
+                ip_map[m.group(1)] = parts[1]
+    return ip_map
 
 
 def _is_iface_up(iface: str) -> Optional[bool]:
@@ -219,29 +218,39 @@ def check_nic():
     separator()
     log("INFO", f"NIC 확인 ({len(NIC_CHECKS)}개 항목)")
 
+    ip_iface_map = _build_ip_iface_map()
     all_ok = True
     for expected_iface, ip in NIC_CHECKS:
-        if not ip:
-            # IP 미지정 — 인터페이스 UP 여부만 확인
+        if ip:
+            # 1) IP 존재 여부 확인 후 UP 상태를 한 줄로 출력
+            actual_iface = ip_iface_map.get(ip)
+            if actual_iface is None:
+                log("ERROR", f"IP 없음: {ip} (예상 NIC: {expected_iface})")
+                all_ok = False
+                continue
+
+            state = _is_iface_up(actual_iface)
+            up_tag = "UP" if state else "DOWN"
+
+            if actual_iface != expected_iface:
+                log("WARN",  f"NIC 다름: {ip}  예상={expected_iface}  실제={actual_iface}  [{up_tag}]")
+            else:
+                log("OK" if state else "ERROR",
+                    f"IP 확인됨: {ip} → {actual_iface}  [{up_tag}]")
+
+            if not state:
+                all_ok = False
+        else:
+            # IP 미지정 — UP 여부만 확인
             state = _is_iface_up(expected_iface)
             if state is None:
                 log("ERROR", f"인터페이스 없음: {expected_iface}")
                 all_ok = False
             elif state:
-                log("OK",   f"UP 확인됨: {expected_iface}")
+                log("OK",    f"UP 확인됨: {expected_iface}")
             else:
                 log("ERROR", f"DOWN 상태: {expected_iface}")
                 all_ok = False
-        else:
-            # IP 지정 — IP 존재 여부 및 NIC 일치 확인
-            actual_iface = _find_iface_for_ip(ip)
-            if actual_iface is None:
-                log("ERROR", f"IP 없음: {ip} (예상 NIC: {expected_iface})")
-                all_ok = False
-            elif actual_iface != expected_iface:
-                log("WARN",  f"IP 존재하나 NIC 다름: {ip}  예상={expected_iface}  실제={actual_iface}")
-            else:
-                log("OK",    f"IP 확인됨: {ip} → {actual_iface}")
 
     return all_ok
 
@@ -277,6 +286,9 @@ def main():
         print(f"[ERROR] {e}")
         return 1
 
+    # 프로파일 적용 후 갱신된 ENABLED를 명시적으로 재참조
+    enabled = ENABLED
+
     profile_label = args.profile.upper() if args.profile else "DEFAULT"
 
     print("=" * 50)
@@ -287,7 +299,7 @@ def main():
     results: Dict[str, Optional[bool]] = {}
 
     for name, func in TASKS:
-        if not ENABLED.get(name, False):
+        if not enabled.get(name, False):
             log("SKIP", f"{name} (비활성)")
             results[name] = None
             continue
