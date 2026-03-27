@@ -4,43 +4,36 @@ setup.py - 시스템 초기 설정 스크립트
 각 Task를 ENABLED 딕셔너리에서 True/False로 제어
 """
 
+import argparse
+import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Optional, Tuple
+from typing import Dict, Callable, List, Optional, Tuple
 
-# =============================================================================
-# 실행할 작업 선택 (True=실행, False=건너뜀)
-# =============================================================================
-ENABLED = {
-    "edit_initial_setup":  True,
-    "check_connectivity":  True,
-    "install_logrotate":   True,
-}
+sys.path.insert(0, str(Path(__file__).parent))
+import config as _cfg
 
-# =============================================================================
-# 설정값
-# =============================================================================
-INITIAL_SETUP_FILE = Path("/home/odin/initial_setup.sh")
+# 모듈 전역 설정 — main()에서 프로파일 적용 후 갱신됨
+_c = _cfg.get_config(None)
+ENABLED            = _c["ENABLED"]
+INITIAL_SETUP_FILE = _c["INITIAL_SETUP_FILE"]
+CAN_CMD_TEMPLATE   = _c["CAN_CMD_TEMPLATE"]
+PING_TARGETS       = _c["PING_TARGETS"]
+PING_COUNT         = _c["PING_COUNT"]
+PING_TIMEOUT       = _c["PING_TIMEOUT"]
+NIC_CHECKS         = _c["NIC_CHECKS"]
+del _c
 
-CAN_CMD_TEMPLATE = (
-    "ip link set {iface} up type can bitrate 500000 "
-    "dbitrate 2000000 berr-reporting on fd on"
-)
 
-PING_TARGETS = [
-    "192.168.31.6",
-    "192.168.31.7",
-    "192.168.31.8",
-    "192.168.0.6",
-    "192.168.0.7",
-    "192.168.0.8",
-]
-
-PING_COUNT   = 3   # 핑 횟수
-PING_TIMEOUT = 2   # 타임아웃(초)
+def _apply_profile(profile: Optional[str]):
+    """프로파일 설정을 모듈 전역 변수에 반영한다."""
+    g = globals()
+    for key, val in _cfg.get_config(profile).items():
+        g[key] = val
 
 
 # =============================================================================
@@ -90,27 +83,42 @@ def edit_initial_setup():
     shutil.copy2(INITIAL_SETUP_FILE, backup)
     log("INFO", f"백업 생성: {backup}")
 
-    lines = INITIAL_SETUP_FILE.read_text().splitlines(keepends=True)
+    original_text = INITIAL_SETUP_FILE.read_text()
+    lines = original_text.splitlines(keepends=True)
     new_lines = []
 
     for line in lines:
-        # 1) "state UP" → "UP" 치환
-        line = line.replace("state UP", "UP")
+        # 1) "state UP" 가 있을 때만 "UP" 으로 치환
+        if "state UP" in line:
+            line = line.replace("state UP", "UP")
+            log("OK", f'  "state UP" → "UP" 치환')
 
-        # 2) "ip link set canX" 를 포함한 줄 전체를 대치
+        # 2) "ip link set canX" 를 포함한 줄 전체를 대치 (동일하면 건너뜀)
         m = re.search(r"ip link set (can\d+)", line)
         if m:
             iface = m.group(1)
-            # 줄 앞 공백(들여쓰기) 유지
             indent = re.match(r"^(\s*)", line).group(1)
-            line = indent + CAN_CMD_TEMPLATE.format(iface=iface) + "\n"
-            log("OK", f'  "{iface}" 줄 대치 완료')
+            new_line = indent + CAN_CMD_TEMPLATE.format(iface=iface) + "\n"
+            if line == new_line:
+                log("INFO", f'  "{iface}" 줄 이미 동일 — 건너뜀')
+            else:
+                line = new_line
+                log("OK", f'  "{iface}" 줄 대치 완료')
 
         new_lines.append(line)
 
-    INITIAL_SETUP_FILE.write_text("".join(new_lines))
-    log("OK", '"state UP" → "UP" 치환 완료')
-    log("OK", "편집 완료")
+    new_text = "".join(new_lines)
+    if new_text == original_text:
+        log("INFO", "변경 사항 없음 — 백업 및 저장 생략")
+    else:
+        backup = INITIAL_SETUP_FILE.with_suffix(
+            f".sh.bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        shutil.copy2(INITIAL_SETUP_FILE, backup)
+        log("INFO", f"백업 생성: {backup}")
+        INITIAL_SETUP_FILE.write_text(new_text)
+        log("OK", "편집 완료")
+
     return True
 
 
@@ -159,17 +167,19 @@ def install_logrotate():
 
     log("INFO", "logrotate 설치 중...")
 
+    sudo = ["sudo"] if shutil.which("sudo") and os.geteuid() != 0 else []
+
     pkg_managers = {
-        "apt-get": ["apt-get", "install", "-y", "logrotate"],
-        "yum":     ["yum",     "install", "-y", "logrotate"],
-        "dnf":     ["dnf",     "install", "-y", "logrotate"],
+        "apt-get": sudo + ["apt-get", "install", "-y", "logrotate"],
+        "yum":     sudo + ["yum",     "install", "-y", "logrotate"],
+        "dnf":     sudo + ["dnf",     "install", "-y", "logrotate"],
     }
 
     for pm, install_cmd in pkg_managers.items():
         if shutil.which(pm):
             log("INFO", f"패키지 매니저 감지: {pm}")
             if pm == "apt-get":
-                run_cmd(["apt-get", "update", "-qq"], check=False)
+                run_cmd(sudo + ["apt-get", "update", "-qq"], check=False)
             try:
                 run_cmd(install_cmd)
                 log("OK", "logrotate 설치 완료")
@@ -183,12 +193,67 @@ def install_logrotate():
 
 
 # =============================================================================
+# Task 4: NIC 이름 및 IP 확인
+# =============================================================================
+def _find_iface_for_ip(ip: str) -> Optional[str]:
+    """시스템 전체에서 ip가 할당된 인터페이스 이름을 반환. 없으면 None."""
+    result = run_cmd(["ip", "-o", "addr"], check=False)
+    for line in result.stdout.splitlines():
+        # 형식: "2: eth0    inet 192.168.1.100/24 ..."
+        m = re.search(rf"\binet6?\s+{re.escape(ip)}(?:/|\s)", line)
+        if m:
+            parts = line.split()
+            return parts[1] if len(parts) >= 2 else None
+    return None
+
+
+def _is_iface_up(iface: str) -> Optional[bool]:
+    """인터페이스가 존재하면 UP 여부(True/False)를 반환. 없으면 None."""
+    result = run_cmd(["ip", "link", "show", iface], check=False)
+    if result.returncode != 0:
+        return None
+    return "state UP" in result.stdout
+
+
+def check_nic():
+    separator()
+    log("INFO", f"NIC 확인 ({len(NIC_CHECKS)}개 항목)")
+
+    all_ok = True
+    for expected_iface, ip in NIC_CHECKS:
+        if not ip:
+            # IP 미지정 — 인터페이스 UP 여부만 확인
+            state = _is_iface_up(expected_iface)
+            if state is None:
+                log("ERROR", f"인터페이스 없음: {expected_iface}")
+                all_ok = False
+            elif state:
+                log("OK",   f"UP 확인됨: {expected_iface}")
+            else:
+                log("ERROR", f"DOWN 상태: {expected_iface}")
+                all_ok = False
+        else:
+            # IP 지정 — IP 존재 여부 및 NIC 일치 확인
+            actual_iface = _find_iface_for_ip(ip)
+            if actual_iface is None:
+                log("ERROR", f"IP 없음: {ip} (예상 NIC: {expected_iface})")
+                all_ok = False
+            elif actual_iface != expected_iface:
+                log("WARN",  f"IP 존재하나 NIC 다름: {ip}  예상={expected_iface}  실제={actual_iface}")
+            else:
+                log("OK",    f"IP 확인됨: {ip} → {actual_iface}")
+
+    return all_ok
+
+
+# =============================================================================
 # Task 등록 테이블 (순서 보장, 새 Task는 여기에만 추가)
 # =============================================================================
 TASKS: List[Tuple[str, Callable]] = [
     ("edit_initial_setup", edit_initial_setup),
     ("check_connectivity", check_connectivity),
     ("install_logrotate",  install_logrotate),
+    ("check_nic",          check_nic),
 ]
 
 
@@ -196,8 +261,26 @@ TASKS: List[Tuple[str, Callable]] = [
 # 메인
 # =============================================================================
 def main():
+    parser = argparse.ArgumentParser(description="시스템 초기 설정 스크립트")
+    parser.add_argument(
+        "profile",
+        nargs="?",
+        default=None,
+        metavar="PROFILE",
+        help="설정 프로파일 (ODIM / ODIL / ODIC, 대소문자 무관). 생략 시 DEFAULT 사용.",
+    )
+    args = parser.parse_args()
+
+    try:
+        _apply_profile(args.profile)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return 1
+
+    profile_label = args.profile.upper() if args.profile else "DEFAULT"
+
     print("=" * 50)
-    print(f" 시스템 초기 설정 스크립트")
+    print(f" 시스템 초기 설정 스크립트  [{profile_label}]")
     print(f" {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
 
