@@ -30,20 +30,20 @@ deploy: deploy-odim deploy-odil deploy-odic
 
 deploy-odim: pack
 	scp $(TARBALL) $(USER)@$(ODIM_VPN):~
-	ssh $(USER)@$(ODIM_VPN) \
+	ssh -t $(USER)@$(ODIM_VPN) \
 	  "mkdir -p $(DEST) && tar -xzf ~/$(TARBALL) -C $(DEST) && python3 $(DEST)/car_config.py --config $(DEST)/$(CONFIG) ODIM"
 
 deploy-odil: pack
 	scp $(TARBALL) $(USER)@$(ODIM_VPN):~
-	ssh $(USER)@$(ODIM_VPN) \
+	ssh -t $(USER)@$(ODIM_VPN) \
 	  "scp ~/$(TARBALL) $(USER)@$(ODIL):~ && \
-	   ssh $(USER)@$(ODIL) 'mkdir -p $(DEST) && tar -xzf ~/$(TARBALL) -C $(DEST) && python3 $(DEST)/car_config.py --config $(DEST)/$(CONFIG) ODIL'"
+	   ssh -t $(USER)@$(ODIL) 'mkdir -p $(DEST) && tar -xzf ~/$(TARBALL) -C $(DEST) && python3 $(DEST)/car_config.py --config $(DEST)/$(CONFIG) ODIL'"
 
 deploy-odic: pack
 	scp $(TARBALL) $(USER)@$(ODIM_VPN):~
-	ssh $(USER)@$(ODIM_VPN) \
+	ssh -t $(USER)@$(ODIM_VPN) \
 	  "scp ~/$(TARBALL) $(USER)@$(ODIC):~ && \
-	   ssh $(USER)@$(ODIC) 'mkdir -p $(DEST) && tar -xzf ~/$(TARBALL) -C $(DEST) && python3 $(DEST)/car_config.py --config $(DEST)/$(CONFIG) ODIC'"
+	   ssh -t $(USER)@$(ODIC) 'mkdir -p $(DEST) && tar -xzf ~/$(TARBALL) -C $(DEST) && python3 $(DEST)/car_config.py --config $(DEST)/$(CONFIG) ODIC'"
 
 clean:
 	rm -f $(TARBALL)

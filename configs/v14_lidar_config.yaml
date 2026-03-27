@@ -77,13 +77,13 @@ defaults:
 lidars:
 
   # LiDAR 1: defaults 설정 그대로 사용 (connection.ip 만 지정)
-  - name: pandar64_0 
+  - name: OT128_0 
     connection:
       ip: "10.30.1.100"
     settings:
       dest_lidar_udp_port: 2368
 
-  - name: pandar64_1 
+  - name: OT128_1 
     connection:
       ip: "10.31.1.100"
     settings:
@@ -93,22 +93,22 @@ lidars:
     connection:
       ip: "10.34.1.100"
     settings:
-      dest_lidar_udp_port: 2371
+      dest_lidar_udp_port: 2370
 
   - name: xt32_1 
     connection:
       ip: "10.35.1.100"
     settings:
-      dest_lidar_udp_port: 2372
+      dest_lidar_udp_port: 2371
 
   - name: xt32_2 
     connection:
       ip: "10.36.1.100"
     settings:
-      dest_lidar_udp_port: 2373
+      dest_lidar_udp_port: 2372
 
   - name: xt32_3 
     connection:
       ip: "10.37.1.100"
     settings:
-      dest_lidar_udp_port: 2374
+      dest_lidar_udp_port: 2373

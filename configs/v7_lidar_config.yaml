@@ -87,16 +87,16 @@ lidars:
     connection:
       ip: "10.34.1.100"
     settings:
-      dest_lidar_udp_port: 2371
+      dest_lidar_udp_port: 2370
 
   - name: xt32_1 
     connection:
       ip: "10.35.1.100"
     settings:
-      dest_lidar_udp_port: 2372
+      dest_lidar_udp_port: 2371
 
   - name: xt32_3 
     connection:
       ip: "10.37.1.100"
     settings:
-      dest_lidar_udp_port: 2374
+      dest_lidar_udp_port: 2373
