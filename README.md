@@ -24,6 +24,37 @@ pip install pyyaml
 
 ---
 
+## lidar_configurator.py
+
+Hesai PTC 프로토콜 기반 LiDAR 설정 스크립트. `car_config.py`의 `run_lidar_config` task에서 호출되거나 단독으로 실행할 수 있습니다.
+
+### 구현된 PTC 커맨드
+
+| 커맨드 ID | 기능 |
+|-----------|------|
+| `0x08` | Config 조회 (IP, 포트, 회전속도, VLAN 등) |
+| `0x09` | 상태 조회 (온도, RPM, PTP 상태 등) |
+| `0x1B` | Trigger Method 설정 (angle / time) |
+| `0x1E` | Return Mode 설정 (last / dual / first) |
+| `0x20` | Destination IP/Port 설정 |
+| `0x24` | PTP Config 설정 |
+| `0x26` | PTP Config 조회 |
+
+### 단독 실행
+
+```bash
+python3 lidar_configurator.py --config configs/v7_lidar_config.yaml
+python3 lidar_configurator.py --config configs/v7_lidar_config.yaml --yes   # 확인 없이 자동 적용
+python3 lidar_configurator.py --config configs/v7_lidar_config.yaml --only pandar64_0
+python3 lidar_configurator.py --generate-sample   # 샘플 설정 파일 생성
+```
+
+### 주의사항
+
+- **Clock Source 변경** (`GPS ↔ PTP`)은 PTC 프로토콜에 전용 커맨드가 없습니다. Web Control에서 수동으로 변경 후 스크립트를 실행하세요. 불일치 감지 시 경고만 출력됩니다.
+
+---
+
 ## 실행
 
 ```bash
