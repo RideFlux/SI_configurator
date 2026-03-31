@@ -251,7 +251,7 @@ def parse_ptp_config(data):
     p["profile"] = data[o]; o+=1
     p["domain"]  = data[o]; o+=1
     p["network"] = data[o]; o+=1
-    if p["profile"] == 0 and len(data) >= 7:
+    if p["profile"] == 0 and len(data) >= o + 3:
         p["logAnnounceInterval"]    = struct.unpack_from("b", data, o)[0]; o+=1
         p["logSyncInterval"]        = struct.unpack_from("b", data, o)[0]; o+=1
         p["logMinDelayReqInterval"] = struct.unpack_from("b", data, o)[0]
@@ -355,9 +355,12 @@ def process_lidar(lidar):
         if wi is not None else None)
 
     want_port = int(s["dest_lidar_udp_port"]) if "dest_lidar_udp_port" in s else None
+    _dest_ip      = cur_cfg["dest_ip"]
+    _gps_udp_port = cur_cfg["dest_gps_udp_port"]
     row("Dest LiDAR UDP Port", cur_cfg["dest_lidar_udp_port"], want_port,
-        (lambda wp=want_port: send_command(ip, port, CMD_SET_DESTINATION_IP,
-            build_set_destination_ip(cur_cfg["dest_ip"], wp, cur_cfg["dest_gps_udp_port"]),
+        (lambda wp=want_port, di=_dest_ip, gp=_gps_udp_port: send_command(
+            ip, port, CMD_SET_DESTINATION_IP,
+            build_set_destination_ip(di, wp, gp),
             timeout)) if want_port is not None else None)
 
     # clock_source: PTC 프로토콜에 전용 변경 커맨드 없음 → 불일치 시 경고만
