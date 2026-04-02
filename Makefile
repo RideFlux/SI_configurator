@@ -26,7 +26,10 @@ FILES   = car_config.py lidar_configurator.py $(CONFIG) $(LIDAR_CONFIG)
 pack:
 	tar -czf $(TARBALL) $(FILES)
 
-deploy: deploy-odim deploy-odil deploy-odic
+deploy:
+	$(MAKE) deploy-odim || true
+	$(MAKE) deploy-odil || true
+	$(MAKE) deploy-odic
 
 deploy-odim: pack
 	scp $(TARBALL) $(USER)@$(ODIM_VPN):~

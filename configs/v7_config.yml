@@ -51,8 +51,6 @@ default:
 profiles:
 
   odim:
-    ENABLED:
-      install_logrotate: false   # odim은 logrotate 설치 불필요
     CAN_CMD_TEMPLATE: >-
       ip link set {iface} up type can bitrate 500000 sjw 3 sample-point 0.8
       dbitrate 2000000 berr-reporting on fd on restart-ms 100

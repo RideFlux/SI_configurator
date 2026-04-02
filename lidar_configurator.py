@@ -321,10 +321,11 @@ def process_lidar(lidar):
         cur_st = {}
 
     # ── 헬퍼 ──────────────────────────────────────────────────────────────
-    def row(label, cur_val, want_val=None, apply_fn=None):
+    def row(label, cur_val, want_val=None, apply_fn=None, color=None):
         mismatch = (want_val is not None) and (cur_val != want_val)
         result["report"].append({"label": label, "current": cur_val,
-                                  "expected": want_val, "mismatch": mismatch})
+                                  "expected": want_val, "mismatch": mismatch,
+                                  "color": color})
         if mismatch and apply_fn:
             result["diffs"].append(Diff(label, cur_val, want_val, apply_fn))
 
@@ -473,7 +474,11 @@ def process_lidar(lidar):
         row("Total Operation (s)",  cur_st["total_operation_time"])
         row("GPS PPS Lock",         "Locked" if cur_st["gps_pps_lock"] else "Unlocked")
         row("GPS GPRMC Status",     "Locked" if cur_st["gps_gprmc_status"] else "Unlocked")
-        row("PTP Clock Status",     cur_st["ptp_clock_status"])
+        _ptp_status = cur_st["ptp_clock_status"]
+        _ptp_color  = GREEN if _ptp_status == "Locked" else YELLOW if _ptp_status == "Tracking" else RED
+        row("PTP Clock Status", _ptp_status, color=_ptp_color)
+        if _ptp_status not in ("Tracking", "Locked"):
+            warn(f"PTP Clock Status가 '{_ptp_status}'입니다. Tracking 또는 Locked 상태를 확인하세요")
 
     else:
         result["report"].append({"label": "Status", "current": "조회 실패",
@@ -507,7 +512,9 @@ def print_report(report):
             else:
                 print(f"  {label:<{col}} {GREEN}{cur:<20}{RESET}  {GREEN}✔{RESET}")
         else:
-            print(f"  {label:<{col}} {cur}")
+            c = item.get("color") or ""
+            r = RESET if c else ""
+            print(f"  {label:<{col}} {c}{cur}{r}")
 
 
 def print_summary(results):
